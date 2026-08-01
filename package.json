@@ -1,0 +1,13 @@
+{
+  "name": "psychological-games-local-mvp",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "check": "tsc -p tsconfig.json --noEmit",
+    "start": "python -m backend.server"
+  },
+  "devDependencies": {
+    "typescript": "^5.9.2"
+  }
+}
