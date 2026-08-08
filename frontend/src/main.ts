@@ -1,52 +1,4 @@
-type GameId = "vault" | "burden" | "chain" | "insurance" | "reputation";
-type Phase = "lobby" | "decision" | "results" | "finished";
-
-interface GameGuide {
-  id: GameId;
-  number: string;
-  name: string;
-  tagline: string;
-  description: string;
-  objective: string;
-  rounds: string;
-  steps: Array<{ title: string; text: string }>;
-  resources: string[];
-  score: string;
-  accent: string;
-}
-
-interface PlayerState {
-  id: string;
-  name: string;
-  acted: boolean;
-  stats: Record<string, number | string>;
-  score: number | null;
-}
-
-interface GameState {
-  code: string;
-  gameId: GameId;
-  gameName: string;
-  phase: Phase;
-  round: number;
-  totalRounds: number;
-  prompt: { title: string; subtitle: string } | null;
-  result: {
-    title: string;
-    detail: string;
-    pressure: string;
-    forced: boolean;
-    changes: Array<{ playerId: string; summary: string }>;
-  } | null;
-  version: number;
-  hostId: string;
-  viewerId: string;
-  viewerHasActed: boolean;
-  viewerHint: string | null;
-  players: PlayerState[];
-}
-
-interface Session { code: string; playerId: string }
+import type { GameGuide, GameId, GameState, Phase, PlayerState, Session } from "./types";
 
 const GAMES: Record<GameId, GameGuide> = {
   vault: {
@@ -258,7 +210,7 @@ function guideContent(game: GameGuide, compact = false): string {
     <div class="guide-objective"><span>Objective</span><p>${escapeHtml(game.objective)}</p></div>
     <div class="steps-heading"><p class="eyebrow">How a round works</p><h2>Four clear steps</h2></div>
     <ol class="steps-grid ${compact ? "compact-steps" : ""}">
-      ${game.steps.map((step, index) => `<li><span>${String(index + 1).padStart(2, "0")}</span><div><strong>${escapeHtml(step.title)}</strong><p>${escapeHtml(step.text)}</p></div></li>`).join("")}
+      ${game.steps.map((step, index) => `<li><span class="step-icon">${["◎", "↔", "⚡", "★"][index]}</span><div><span class="step-number">${String(index + 1).padStart(2, "0")}</span><strong>${escapeHtml(step.title)}</strong><p>${escapeHtml(step.text)}</p></div></li>`).join("")}
     </ol>
     <div class="guide-meta">
       <div><span>Starting resources</span><p>${game.resources.map(escapeHtml).join(" · ")}</p></div>
@@ -341,6 +293,7 @@ function renderPhase(game: GameState, me: PlayerState, isHost: boolean): string 
   if (game.phase === "decision") return `
     <div class="round-line"><span>ROUND ${game.round} / ${game.totalRounds}</span><span>${submitted} / ${game.players.length} decisions sealed</span></div>
     <div class="event-card"><p class="eyebrow">Shared condition</p><h1>${escapeHtml(game.prompt?.title)}</h1><p>${escapeHtml(game.prompt?.subtitle)}</p></div>
+    ${liveGuide(game.gameId, game, me)}
     ${game.viewerHint ? `<div class="private-clue"><span>PRIVATE CLUE</span><p>${escapeHtml(game.viewerHint)}</p></div>` : ""}
     ${game.viewerHasActed ? `<div class="sealed-state"><div class="seal-glyph">✓</div><h2>Your decision is sealed.</h2><p>Resolution begins automatically when everyone submits.</p></div>` : renderActionForm(game, me)}
     ${isHost ? `<button id="force-resolve" class="text-button force">Resolve with safe defaults for missing players</button>` : ""}`;
@@ -349,7 +302,7 @@ function renderPhase(game: GameState, me: PlayerState, isHost: boolean): string 
     const mine = game.result.changes.find((change) => change.playerId === game.viewerId);
     return `
       <div class="round-line"><span>ROUND ${game.round} RESOLVED</span><span class="pressure">${escapeHtml(game.result.pressure)}</span></div>
-      <div class="result-card"><p class="eyebrow">Outcome</p><h1>${escapeHtml(game.result.title)}</h1><p>${escapeHtml(game.result.detail)}</p>${game.result.forced ? `<p class="muted">Missing players received the game’s safest default action.</p>` : ""}<div class="your-change"><span>Your change</span><strong>${escapeHtml(mine?.summary || "No change")}</strong></div></div>
+      <div class="result-card"><p class="eyebrow">Round replay</p><div class="replay-track"><span class="replay-node done">Choice</span><i>→</i><span class="replay-node done">Room effect</span><i>→</i><span class="replay-node current">Outcome</span></div><h1>${escapeHtml(game.result.title)}</h1><p>${escapeHtml(game.result.detail)}</p>${game.result.forced ? `<p class="muted">Missing players received the game’s safest default action.</p>` : ""}<div class="your-change"><span>Your change</span><strong>${escapeHtml(mine?.summary || "No change")}</strong></div></div>
       ${isHost ? `<button id="next-round" class="primary wide" ${busy ? "disabled" : ""}>${busy ? "Continuing…" : game.round === game.totalRounds ? "Reveal final standing" : "Continue"}</button>` : `<p class="waiting">Waiting for the host to continue…</p>`}`;
   }
 
@@ -358,6 +311,19 @@ function renderPhase(game: GameState, me: PlayerState, isHost: boolean): string 
     <div class="phase-heading final-heading"><p class="eyebrow">Experiment complete</p><h1>Final standing</h1><p>${escapeHtml(GAMES[game.gameId].score)}</p></div>
     <ol class="rankings">${rankings.map((player, index) => `<li class="${player.id === game.viewerId ? "is-you" : ""}"><span class="rank">${String(index + 1).padStart(2, "0")}</span><strong>${escapeHtml(player.name)}${player.id === game.viewerId ? " · YOU" : ""}</strong><span>${player.score} pts</span></li>`).join("")}</ol>
     <button id="leave-finished" class="secondary wide">Choose another game</button>`;
+}
+
+function liveGuide(gameId: GameId, game: GameState, me: PlayerState): string {
+  const hints: Record<GameId, string> = {
+    vault: "Locking protects wealth; liquidity lets you react. Watch the room meter before committing.",
+    burden: "Protected wealth is safer but decays. Exposed wealth follows the room’s shared pressure.",
+    chain: "Every pass banks value, but rupture risk grows. Refusing is safer when your tokens remain.",
+    insurance: "The room creates the threat together. Protection lowers risk; profit and sabotage raise it.",
+    reputation: "Spending reputation buys influence now. Conserving it keeps your final voting power strong."
+  };
+  const values = Object.values(me.stats).map(Number).filter(Number.isFinite);
+  const intensity = Math.min(100, Math.max(12, Math.round((values[0] || 0) % 100)));
+  return `<section class="live-guide" aria-label="Live round guidance"><div class="live-guide-head"><span class="eyebrow">Live decision guide</span><span class="live-pulse"><i></i> ROOM UPDATING</span></div><div class="live-flow"><span class="flow-step active">1<br><small>Choose</small></span><b>→</b><span class="flow-step">2<br><small>Seal</small></span><b>→</b><span class="flow-step">3<br><small>Reveal</small></span></div><p>${hints[gameId]}</p><div class="room-meter"><span>Pressure</span><div><i style="width:${intensity}%"></i></div><strong>${game.players.filter((p) => p.acted).length}/${game.players.length}</strong></div></section>`;
 }
 
 function targetOptions(game: GameState): string {
