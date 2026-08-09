@@ -5,7 +5,7 @@ from typing import Any, Literal
 import argparse
 
 import uvicorn
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
@@ -43,12 +43,21 @@ class ActionRequest(PlayerRequest):
 
 def create_app(store: GameStore | None = None) -> FastAPI:
     game_store = store or GameStore()
+    sockets: dict[str, set[tuple[WebSocket, str]]] = {}
     app = FastAPI(
         title="Psychological Games API",
         version="2.0.0",
         description="Server-authoritative local multiplayer API for five loss-aversion games.",
     )
     app.state.game_store = game_store
+
+    async def broadcast(code: str) -> None:
+        connections = sockets.get(code.upper(), set()).copy()
+        for websocket, player_id in connections:
+            try:
+                await websocket.send_json(game_store.public_state(code, player_id))
+            except Exception:
+                sockets.get(code.upper(), set()).discard((websocket, player_id))
 
     @app.exception_handler(GameError)
     async def game_error_handler(_request: Request, exc: GameError) -> JSONResponse:
@@ -86,24 +95,43 @@ def create_app(store: GameStore | None = None) -> FastAPI:
     def get_room(code: str, playerId: str) -> dict[str, Any]:
         return game_store.public_state(code, playerId)
 
+    @app.websocket("/api/rooms/{code}/ws")
+    async def room_socket(websocket: WebSocket, code: str, playerId: str) -> None:
+        await websocket.accept()
+        normalized = code.upper()
+        connection = (websocket, playerId)
+        sockets.setdefault(normalized, set()).add(connection)
+        try:
+            await websocket.send_json(game_store.public_state(normalized, playerId))
+            while True:
+                await websocket.receive_text()
+        except (WebSocketDisconnect, RuntimeError):
+            pass
+        finally:
+            sockets.get(normalized, set()).discard(connection)
+
     @app.post("/api/rooms/{code}/start")
-    def start_room(code: str, payload: PlayerRequest) -> dict[str, Any]:
+    async def start_room(code: str, payload: PlayerRequest) -> dict[str, Any]:
         game_store.start(code, payload.playerId)
+        await broadcast(code)
         return game_store.public_state(code, payload.playerId)
 
     @app.post("/api/rooms/{code}/actions")
-    def submit_action(code: str, payload: ActionRequest) -> dict[str, Any]:
+    async def submit_action(code: str, payload: ActionRequest) -> dict[str, Any]:
         game_store.submit_action(code, payload.playerId, payload.values, payload.idempotencyKey)
+        await broadcast(code)
         return game_store.public_state(code, payload.playerId)
 
     @app.post("/api/rooms/{code}/resolve")
-    def resolve_room(code: str, payload: PlayerRequest) -> dict[str, Any]:
+    async def resolve_room(code: str, payload: PlayerRequest) -> dict[str, Any]:
         game_store.force_resolve(code, payload.playerId)
+        await broadcast(code)
         return game_store.public_state(code, payload.playerId)
 
     @app.post("/api/rooms/{code}/next")
-    def next_round(code: str, payload: PlayerRequest) -> dict[str, Any]:
+    async def next_round(code: str, payload: PlayerRequest) -> dict[str, Any]:
         game_store.next_round(code, payload.playerId)
+        await broadcast(code)
         return game_store.public_state(code, payload.playerId)
 
     # API routes must be registered before the root static mount.
