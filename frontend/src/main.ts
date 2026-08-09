@@ -90,6 +90,8 @@ let busy = false;
 let message = "";
 let serverStatus: "checking" | "online" | "offline" = "checking";
 let pollTimer: number | undefined;
+let roomSocket: WebSocket | undefined;
+let socketRetry: number | undefined;
 
 function readSession(): Session | null {
   try {
@@ -99,9 +101,21 @@ function readSession(): Session | null {
 }
 
 function saveSession(next: Session | null): void {
+  roomSocket?.close(); roomSocket = undefined;
+  window.clearTimeout(socketRetry);
   session = next;
   if (next) sessionStorage.setItem("loss-arcade-session", JSON.stringify(next));
   else sessionStorage.removeItem("loss-arcade-session");
+}
+
+function connectRoomSocket(): void {
+  if (!session) return;
+  roomSocket?.close();
+  const protocol = location.protocol === "https:" ? "wss:" : "ws:";
+  roomSocket = new WebSocket(`${protocol}//${location.host}/api/rooms/${encodeURIComponent(session.code)}/ws?playerId=${encodeURIComponent(session.playerId)}`);
+  roomSocket.onopen = () => { serverStatus = "online"; render(); };
+  roomSocket.onmessage = (event) => { state = JSON.parse(event.data) as GameState; selectedGame = state.gameId; serverStatus = "online"; render(); };
+  roomSocket.onclose = () => { if (session) { serverStatus = "offline"; render(); socketRetry = window.setTimeout(connectRoomSocket, 2000); } };
 }
 
 async function api<T>(path: string, options: RequestInit = {}): Promise<T> {
@@ -434,7 +448,9 @@ async function boot(): Promise<void> {
     message = "FastAPI is not reachable. Run: python -m backend.server";
   }
   render(); if (session && serverStatus === "online") await refresh();
-  window.clearInterval(pollTimer); pollTimer = window.setInterval(() => void refresh(true), 1200);
+  window.clearInterval(pollTimer);
+  connectRoomSocket();
+  pollTimer = window.setInterval(() => { if (!roomSocket || roomSocket.readyState !== WebSocket.OPEN) void refresh(true); }, 5000);
 }
 
 void boot();

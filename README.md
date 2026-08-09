@@ -1,4 +1,8 @@
-# Psychological Games — Local Multiplayer MVP
+# Psychological Games — Loss Aversion Arcade
+
+[![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+
+A dependency-light, server-authoritative local multiplayer arcade for exploring decision-making under pressure. It is designed to be readable, hackable, and safe to extend.
 
 This project turns all five concepts from `Psychology_Loss_Aversion_Games.md` into a locally playable multiplayer arcade. Players first choose a game, read a visual four-step explanation, create or join a room, and play through server-authoritative rounds.
 
@@ -24,7 +28,7 @@ Browser tab
   ├─ game catalog and visual rule guides
   ├─ game-specific decision forms
   ├─ per-tab anonymous identity
-  └─ room-state polling every 1.2 seconds
+  └─ room-state WebSocket updates with 5-second HTTP fallback
              │ player intentions as JSON
              ▼
 FastAPI + Pydantic + Uvicorn                       backend/server.py

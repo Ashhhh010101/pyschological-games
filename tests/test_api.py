@@ -39,7 +39,16 @@ class FastApiTests(unittest.TestCase):
         self.assertEqual(response.status_code, 422)
         self.assertIn("gameId", response.json()["error"])
 
+    def test_room_websocket_returns_private_room_state(self):
+        created = self.client.post("/api/rooms", json={"name": "Host", "gameId": "vault"}).json()
+        self.client.post(f"/api/rooms/{created['code']}/join", json={"name": "Guest"})
+        with self.client.websocket_connect(
+            f"/api/rooms/{created['code']}/ws?playerId={created['playerId']}"
+        ) as socket:
+            state = socket.receive_json()
+            self.assertEqual(state["code"], created["code"])
+            self.assertEqual(state["viewerId"], created["playerId"])
+
 
 if __name__ == "__main__":
     unittest.main()
-
