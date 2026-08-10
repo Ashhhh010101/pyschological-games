@@ -366,3 +366,52 @@ input[type="text"], input:not([type]) { width: 100%; }
   .phase-rail span { letter-spacing: .04em; }
   .intro-copy span { line-height: 1.5; }
 }
+
+/* Motion pass: make the room feel responsive without competing with play. */
+body::before, body::after {
+  content: "";
+  position: fixed;
+  z-index: -1;
+  width: 42vw;
+  height: 42vw;
+  border-radius: 50%;
+  pointer-events: none;
+  filter: blur(70px);
+  opacity: .11;
+  mix-blend-mode: screen;
+  animation: ambient-drift 18s ease-in-out infinite alternate;
+}
+body::before { top: -18vw; right: -12vw; background: var(--game-accent); }
+body::after { bottom: -24vw; left: -15vw; background: #6a8cff; animation-delay: -8s; animation-duration: 23s; }
+
+.catalog-shell, .guide-shell, .game-shell { animation: page-rise .7s cubic-bezier(.2,.8,.2,1) both; }
+.catalog-header, .guide-nav, .topbar { animation: fade-slide .55s .05s both; }
+.catalog-intro, .guide-hero, .phase-rail { animation: fade-slide .65s .12s both; }
+.game-catalog .game-tile { animation: tile-in .55s both; }
+.game-catalog .game-tile:nth-child(1) { animation-delay: .12s; }
+.game-catalog .game-tile:nth-child(2) { animation-delay: .18s; }
+.game-catalog .game-tile:nth-child(3) { animation-delay: .24s; }
+.game-catalog .game-tile:nth-child(4) { animation-delay: .30s; }
+.game-catalog .game-tile:nth-child(5) { animation-delay: .36s; }
+.main-panel, .side-panel { animation: panel-in .6s .16s both; }
+.side-panel { animation-delay: .24s; }
+.steps-grid li { transition: background .25s, transform .25s, box-shadow .25s; }
+.steps-grid li:hover { background: rgba(255,255,255,.025); transform: translateY(-3px); box-shadow: inset 0 1px 0 rgba(255,255,255,.04); }
+.step-icon { transition: transform .3s, background .3s, box-shadow .3s; }
+.steps-grid li:hover .step-icon { transform: rotate(-8deg) scale(1.08); background: color-mix(in srgb, var(--game-accent) 12%, transparent); box-shadow: 0 0 22px color-mix(in srgb, var(--game-accent) 18%, transparent); }
+.phase-rail span.current i { animation: phase-ping 2.2s ease-in-out infinite; }
+.lobby-status .pulse { animation: pulse 1.4s ease-in-out infinite, status-glow 2.8s ease-in-out infinite; }
+.event-card, .decision-card, .result-card { animation: card-arrive .55s .18s both; }
+.live-guide { animation: soft-glow 3.2s ease-in-out infinite; }
+.primary:not(:disabled) { animation: button-breathe 3.5s ease-in-out infinite; }
+
+@keyframes page-rise { from { opacity: 0; transform: translateY(12px); } to { opacity: 1; transform: none; } }
+@keyframes fade-slide { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
+@keyframes tile-in { from { opacity: 0; transform: translateX(-14px); } to { opacity: 1; transform: none; } }
+@keyframes panel-in { from { opacity: 0; transform: translateY(15px) scale(.99); } to { opacity: 1; transform: none; } }
+@keyframes card-arrive { from { opacity: 0; transform: scale(.985) translateY(8px); } to { opacity: 1; transform: none; } }
+@keyframes ambient-drift { to { transform: translate3d(-7vw, 5vh, 0) scale(1.14); } }
+@keyframes phase-ping { 50% { box-shadow: 0 0 0 7px color-mix(in srgb, var(--game-accent) 0%, transparent), 0 0 25px color-mix(in srgb, var(--game-accent) 45%, transparent); } }
+@keyframes status-glow { 50% { box-shadow: 0 0 13px rgba(121,211,154,.75); } }
+@keyframes soft-glow { 50% { box-shadow: 0 0 28px color-mix(in srgb, var(--game-accent) 8%, transparent); } }
+@keyframes button-breathe { 50% { box-shadow: 0 12px 34px color-mix(in srgb, var(--game-accent) 22%, transparent); } }
