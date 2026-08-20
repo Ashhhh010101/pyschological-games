@@ -24,6 +24,8 @@ COPY requirements.txt ./
 RUN python -m pip install --no-cache-dir --disable-pip-version-check -r requirements.txt
 
 COPY backend ./backend
+COPY alembic.ini ./
+COPY alembic ./alembic
 COPY frontend/index.html frontend/styles.css ./frontend/
 COPY --from=frontend-builder /app/frontend/dist ./frontend/dist
 
@@ -31,6 +33,6 @@ USER app
 EXPOSE 8000
 
 HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
-  CMD ["python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/api/health', timeout=2)"]
+  CMD ["python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/api/ready', timeout=2)"]
 
 CMD ["python", "-m", "backend.server"]

@@ -1,16 +1,18 @@
 import asyncio
 import unittest
+from datetime import datetime, timedelta, timezone
 
 from sqlalchemy import func, select
 
 from backend.application.room_service import RoomService
 from backend.application.session_service import SessionService
-from backend.domain.exceptions import ApplicationError, InvalidGameAction, UnauthorizedPlayer
+from backend.domain.exceptions import ApplicationError, InvalidGameAction, RoomExpired, UnauthorizedPlayer
 from backend.infrastructure.database.models import (
     GameEventRecord,
     GameStateSnapshotRecord,
     PlayerRecord,
     ResultRecord,
+    RoomRecord,
 )
 from backend.infrastructure.database.repositories.sqlalchemy_room_repository import SQLAlchemyRoomRepository
 from backend.infrastructure.database.session import create_database
@@ -101,6 +103,19 @@ class PersistenceTests(unittest.IsolatedAsyncioTestCase):
         async with self.sessions() as session:
             result_count = await session.scalar(select(func.count()).select_from(ResultRecord))
         self.assertEqual(result_count, 1)
+
+    async def test_idle_expiry_is_durable_and_idempotent(self) -> None:
+        created = await self.service.create_room("Host", "vault")
+        async with self.sessions.begin() as session:
+            room = await session.get(RoomRecord, created["code"])
+            self.assertIsNotNone(room)
+            if room is not None:
+                room.expires_at = datetime.now(timezone.utc) - timedelta(seconds=1)
+
+        self.assertEqual(await self.service.expire_idle_rooms(), [created["code"]])
+        self.assertEqual(await self.service.expire_idle_rooms(), [])
+        with self.assertRaises(RoomExpired):
+            await self.service.public_state(created["code"], created["playerId"])
 
 
 if __name__ == "__main__":
