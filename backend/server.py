@@ -229,6 +229,7 @@ def create_app(store: GameStore | None = None, runtime_settings: Settings | None
                 "http_path": request.url.path,
                 "http_status": response.status_code,
                 "duration_ms": round(duration_ms, 3),
+                "player_ref": getattr(request.state, "player_ref", ""),
             },
         )
         response.headers["X-Request-ID"] = request_id
@@ -313,20 +314,28 @@ def create_app(store: GameStore | None = None, runtime_settings: Settings | None
         return await service.join_room(code, payload.name)
 
     @app.get("/api/rooms/{code}")
-    async def get_room(code: str, playerId: str) -> dict[str, Any]:
+    async def get_room(code: str, request: Request, playerId: str) -> dict[str, Any]:
+        request.state.player_ref = _token_identity(playerId)[:12]
         return await service.public_state(code, playerId)
 
     @app.websocket("/api/rooms/{code}/ws")
     async def room_socket(websocket: WebSocket, code: str, playerId: str) -> None:
         normalized = code.upper()
         identity = websocket.client.host if websocket.client else "unknown"
+        player_ref = _token_identity(playerId)[:12]
+        binding = bind_context(str(uuid4()), normalized, "WEBSOCKET")
         try:
             await limiter.check("websocket", identity, settings.websocket_limit)
             initial_state = await service.public_state(normalized, playerId)
         except (ApplicationError, GameError) as exc:
             await websocket.close(code=1008, reason=str(exc))
+            binding.reset()
             return
         await connections.connect(websocket, normalized, playerId)
+        LOGGER.info(
+            "WebSocket connected",
+            extra={"event": "websocket.connected", "player_ref": player_ref},
+        )
         try:
             await websocket.send_json(initial_state)
             while True:
@@ -335,24 +344,33 @@ def create_app(store: GameStore | None = None, runtime_settings: Settings | None
             pass
         finally:
             connections.disconnect(websocket, normalized, playerId)
+            LOGGER.info(
+                "WebSocket disconnected",
+                extra={"event": "websocket.disconnected", "player_ref": player_ref},
+            )
+            binding.reset()
 
     @app.post("/api/rooms/{code}/start")
-    async def start_room(code: str, payload: PlayerRequest) -> dict[str, Any]:
+    async def start_room(code: str, request: Request, payload: PlayerRequest) -> dict[str, Any]:
+        request.state.player_ref = _token_identity(payload.player_id)[:12]
         await limiter.check("action", _token_identity(payload.player_id), settings.action_limit)
         return await service.start(code, payload.player_id, payload.idempotency_key)
 
     @app.post("/api/rooms/{code}/actions")
-    async def submit_action(code: str, payload: ActionRequest) -> dict[str, Any]:
+    async def submit_action(code: str, request: Request, payload: ActionRequest) -> dict[str, Any]:
+        request.state.player_ref = _token_identity(payload.player_id)[:12]
         await limiter.check("action", _token_identity(payload.player_id), settings.action_limit)
         return await service.submit_action(code, payload.player_id, payload.values, payload.idempotency_key)
 
     @app.post("/api/rooms/{code}/resolve")
-    async def resolve_room(code: str, payload: PlayerRequest) -> dict[str, Any]:
+    async def resolve_room(code: str, request: Request, payload: PlayerRequest) -> dict[str, Any]:
+        request.state.player_ref = _token_identity(payload.player_id)[:12]
         await limiter.check("resolve", _token_identity(payload.player_id), settings.resolve_limit)
         return await service.force_resolve(code, payload.player_id, payload.idempotency_key)
 
     @app.post("/api/rooms/{code}/next")
-    async def next_round(code: str, payload: PlayerRequest) -> dict[str, Any]:
+    async def next_round(code: str, request: Request, payload: PlayerRequest) -> dict[str, Any]:
+        request.state.player_ref = _token_identity(payload.player_id)[:12]
         await limiter.check("action", _token_identity(payload.player_id), settings.action_limit)
         return await service.next_round(code, payload.player_id, payload.idempotency_key)
 
