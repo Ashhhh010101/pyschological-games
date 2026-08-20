@@ -10,6 +10,7 @@ htmlcov/
 
 # Virtual environments
 .venv/
+myvenv/
 venv/
 env/
 
@@ -30,6 +31,11 @@ pnpm-debug.log*
 # Runtime files
 *.log
 *.pid
+
+# Build and packaging
+build/
+dist/
+*.egg-info/
 
 # Editors and operating systems
 .vscode/

@@ -7,9 +7,13 @@
     "rootDir": "frontend/src",
     "outDir": "frontend/dist",
     "strict": true,
+    "forceConsistentCasingInFileNames": true,
+    "noFallthroughCasesInSwitch": true,
+    "noImplicitOverride": true,
+    "noUncheckedIndexedAccess": true,
     "noEmitOnError": true,
-    "removeComments": true
+    "removeComments": true,
+    "verbatimModuleSyntax": true
   },
   "include": ["frontend/src/**/*.ts"]
 }
-

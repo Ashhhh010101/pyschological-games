@@ -4,6 +4,8 @@
 
 A dependency-light, server-authoritative local multiplayer arcade for exploring decision-making under pressure. It is designed to be readable, hackable, and safe to extend.
 
+The project is self-hostable with Docker and includes a reproducible frontend build, health check, non-root runtime, automated tests, static analysis, and continuous integration. Rooms are intentionally stored in memory: restarting the server ends every active game. This makes the current release suitable for local play and trusted private networks, not an unauthenticated public service.
+
 This project turns all five concepts from `Psychology_Loss_Aversion_Games.md` into a locally playable multiplayer arcade. Players first choose a game, read a visual four-step explanation, create or join a room, and play through server-authoritative rounds.
 
 The full source extraction—including original rules and unresolved design questions—is in [GAME_CATALOG.md](GAME_CATALOG.md).
@@ -55,9 +57,13 @@ Rooms live in memory and disappear when the Python process stops. This is intent
 
 | Path | Responsibility |
 |---|---|
-| `backend/game.py` | Shared room lifecycle plus five game rule engines |
-| `backend/server.py` | FastAPI routes, Pydantic schemas, static files, and Uvicorn entry point |
-| `frontend/src/main.ts` | Catalog, instruction guides, typed API client, and all game interfaces |
+| `backend/game.py` | Thread-safe room lifecycle and five server-authoritative rule engines |
+| `backend/config.py` | Typed game definitions and room limits |
+| `backend/models.py` | Domain state and final scoring |
+| `backend/server.py` | FastAPI application factory, routes, security headers, and Uvicorn entry point |
+| `frontend/src/main.ts` | UI state and game interface rendering |
+| `frontend/src/client.ts` | HTTP, WebSocket payload validation, and session persistence |
+| `frontend/src/catalog.ts` | Game guides and display labels |
 | `frontend/styles.css` | Responsive catalog, guides, rooms, decisions, and results |
 | `tests/test_game.py` | Full-session coverage for every game plus authority/privacy checks |
 | `GAME_CATALOG.md` | Detailed extraction of the original source document |
@@ -69,16 +75,32 @@ Rooms live in memory and disappear when the Python process stops. This is intent
 
 Python dependencies are FastAPI and Uvicorn. TypeScript is the sole npm development dependency.
 
-## Install and run
+## Quick start with Docker
+
+Docker Compose builds both the TypeScript frontend and Python runtime, then starts the app as a non-root user:
+
+```console
+docker compose up --build
+```
+
+Open <http://127.0.0.1:8000>. To bind another host port, copy `.env.example` to `.env`, change `PORT`, and run the same command. Stop the service with `docker compose down`.
+
+The container has a health check, a read-only filesystem, no-new-privileges, and no persistent volume because current room state is ephemeral.
+
+## Local development
 
 From this directory:
 
 ```powershell
-python -m pip install -r requirements.txt
-npm install
+python -m venv .venv
+.\.venv\Scripts\Activate.ps1
+python -m pip install -r requirements-dev.txt
+npm ci
 npm run build
 python -m backend.server
 ```
+
+On macOS or Linux, activate the environment with `source .venv/bin/activate`.
 
 Open <http://127.0.0.1:8000>.
 
@@ -92,7 +114,7 @@ FastAPI’s interactive API documentation is available at <http://127.0.0.1:8000
 
 Identity is stored in `sessionStorage`, so separate tabs can represent separate local players. The source design targets 3–10 players; this MVP permits 2–10 to make solo testing practical.
 
-To use another port:
+The server reads `HOST` and `PORT` from the environment; command-line flags take precedence:
 
 ```powershell
 python -m backend.server --port 8080
@@ -121,11 +143,26 @@ python -m uvicorn backend.server:app --reload
 ## Verify
 
 ```powershell
+npm ci
 npm run check
+python -m ruff check backend tests
+python -m ruff format --check backend tests
+python -m mypy backend
 python -m unittest discover -v
+python -m coverage run -m unittest discover -s tests
+python -m coverage report
 ```
 
-The automated suite runs all five games from lobby to final score and checks the FastAPI routes, static app delivery, request validation, host authority, idempotency, invalid game rejection, and private Vault information.
+The automated suite runs all five games from lobby to final score and checks the FastAPI routes, static app delivery, request validation, HTTP error semantics, host authority, idempotency, invalid game rejection, security headers, and private Vault information. CI repeats these checks on Python 3.10 and 3.13, builds the browser modules with Node.js 22, and verifies the container image.
+
+## Configuration
+
+| Variable | Default | Purpose |
+|---|---:|---|
+| `HOST` | `127.0.0.1` | Address used by the local Python process |
+| `PORT` | `8000` | TCP port used by the local Python process or host-side Compose mapping |
+
+No secrets are required. Do not put credentials in `.env`; it is ignored by Git.
 
 ## API summary
 
@@ -167,3 +204,5 @@ The following production-depth systems remain deferred: direct negotiation/chat,
 ## Production path
 
 Keep the game-rule boundary in `backend/game.py`, move rooms and actions into PostgreSQL transactions, add server deadlines, and broadcast committed room versions through a realtime provider. Anonymous tokens should become hashed expiring credentials. Direct negotiation mechanics should use an append-only event stream so disputes, reconnects, and replays remain deterministic.
+
+Before exposing the service to the public internet, add authentication, rate limiting, durable shared storage, room expiry, TLS at a trusted reverse proxy, structured observability, and multi-instance WebSocket fan-out. See [SECURITY.md](SECURITY.md) for the supported security posture and [CONTRIBUTING.md](CONTRIBUTING.md) for development expectations.
