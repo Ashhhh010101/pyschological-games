@@ -1,7 +1,7 @@
 import unittest
 from random import Random
 
-from backend.game import GAME_CONFIG, GameError, GameStore
+from backend.game import GAME_CONFIG, GameConflictError, GameError, GamePermissionError, GameStore
 
 
 class GameStoreTests(unittest.TestCase):
@@ -45,8 +45,26 @@ class GameStoreTests(unittest.TestCase):
         values = self.action_for("vault", host)
         store.submit_action(room.code, host.id, values, "same")
         store.submit_action(room.code, host.id, values, "same")
-        with self.assertRaises(GameError):
+        with self.assertRaises(GameConflictError):
             store.submit_action(room.code, host.id, values, "different")
+
+    def test_action_values_require_exact_json_types(self):
+        store, room, host, _ = self.make_room()
+        store.start(room.code, host.id)
+        with self.assertRaisesRegex(GameError, "whole number"):
+            store.submit_action(
+                room.code,
+                host.id,
+                {"deposit": 1.5, "useKey": False, "useSeal": False},
+                "fraction",
+            )
+        with self.assertRaisesRegex(GameError, "true or false"):
+            store.submit_action(
+                room.code,
+                host.id,
+                {"deposit": 1, "useKey": "false", "useSeal": False},
+                "string-boolean",
+            )
 
     def test_private_vault_value_is_hidden(self):
         store, room, host, guest = self.make_room()
@@ -58,13 +76,25 @@ class GameStoreTests(unittest.TestCase):
 
     def test_only_host_can_start(self):
         store, room, _, guest = self.make_room()
-        with self.assertRaises(GameError):
+        with self.assertRaises(GamePermissionError):
             store.start(room.code, guest.id)
 
     def test_invalid_game_is_rejected(self):
         store = GameStore(Random(1))
         with self.assertRaises(GameError):
             store.create_room("Host", "unknown")
+
+    def test_names_are_normalized_and_case_insensitive_duplicates_are_rejected(self):
+        store = GameStore(Random(2))
+        room, _ = store.create_room("  Ada   Lovelace ", "vault")
+        self.assertEqual(next(iter(room.players.values())).name, "Ada Lovelace")
+        with self.assertRaises(GameError):
+            store.join_room(room.code.lower(), "ada lovelace")
+
+    def test_room_code_lookup_is_case_insensitive(self):
+        store = GameStore(Random(3))
+        room, _ = store.create_room("Host", "vault")
+        self.assertEqual(store._room(room.code.lower()).code, room.code)
 
 
 if __name__ == "__main__":

@@ -39,12 +39,33 @@ class FastApiTests(unittest.TestCase):
         self.assertEqual(response.status_code, 422)
         self.assertIn("gameId", response.json()["error"])
 
+    def test_domain_errors_use_specific_http_statuses(self):
+        missing = self.client.get("/api/rooms/NOPE?playerId=unknown")
+        self.assertEqual(missing.status_code, 404)
+
+        created = self.client.post("/api/rooms", json={"name": "Host", "gameId": "vault"}).json()
+        joined = self.client.post(f"/api/rooms/{created['code']}/join", json={"name": "Guest"}).json()
+        forbidden = self.client.post(
+            f"/api/rooms/{created['code']}/start",
+            json={"playerId": joined["playerId"]},
+        )
+        self.assertEqual(forbidden.status_code, 403)
+
+        conflict = self.client.post(
+            f"/api/rooms/{created['code']}/start",
+            json={"playerId": created["playerId"]},
+        )
+        self.assertEqual(conflict.status_code, 200)
+        repeated = self.client.post(
+            f"/api/rooms/{created['code']}/start",
+            json={"playerId": created["playerId"]},
+        )
+        self.assertEqual(repeated.status_code, 409)
+
     def test_room_websocket_returns_private_room_state(self):
         created = self.client.post("/api/rooms", json={"name": "Host", "gameId": "vault"}).json()
         self.client.post(f"/api/rooms/{created['code']}/join", json={"name": "Guest"})
-        with self.client.websocket_connect(
-            f"/api/rooms/{created['code']}/ws?playerId={created['playerId']}"
-        ) as socket:
+        with self.client.websocket_connect(f"/api/rooms/{created['code']}/ws?playerId={created['playerId']}") as socket:
             state = socket.receive_json()
             self.assertEqual(state["code"], created["code"])
             self.assertEqual(state["viewerId"], created["playerId"])

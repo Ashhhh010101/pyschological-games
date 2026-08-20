@@ -1,67 +1,50 @@
 from __future__ import annotations
 
-from pathlib import Path
-from typing import Any, Literal
 import argparse
+import os
+from pathlib import Path
+from typing import Any
 
 import uvicorn
 from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel, ConfigDict, Field
 
-from backend.game import GAME_CONFIG, GameError, GameStore
-
+from backend import __version__
+from backend.api_models import (
+    ActionRequest,
+    CreateRoomRequest,
+    JoinRoomRequest,
+    PlayerRequest,
+)
+from backend.config import GAME_CONFIG
+from backend.connections import ConnectionManager
+from backend.game import GameError, GameStore
 
 ROOT = Path(__file__).resolve().parents[1]
 FRONTEND = ROOT / "frontend"
-GameId = Literal["vault", "burden", "chain", "insurance", "reputation"]
-
-
-class StrictModel(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-
-class CreateRoomRequest(StrictModel):
-    name: str = Field(min_length=1, max_length=24)
-    gameId: GameId
-
-
-class JoinRoomRequest(StrictModel):
-    name: str = Field(min_length=1, max_length=24)
-
-
-class PlayerRequest(StrictModel):
-    playerId: str = Field(min_length=1, max_length=128)
-
-
-class ActionRequest(PlayerRequest):
-    idempotencyKey: str = Field(min_length=1, max_length=128)
-    values: dict[str, Any]
 
 
 def create_app(store: GameStore | None = None) -> FastAPI:
+    """Build an isolated application instance for production or tests."""
     game_store = store or GameStore()
-    sockets: dict[str, set[tuple[WebSocket, str]]] = {}
+    connections = ConnectionManager()
     app = FastAPI(
         title="Psychological Games API",
-        version="2.0.0",
+        version=__version__,
         description="Server-authoritative local multiplayer API for five loss-aversion games.",
     )
     app.state.game_store = game_store
+    app.state.connections = connections
 
     async def broadcast(code: str) -> None:
-        connections = sockets.get(code.upper(), set()).copy()
-        for websocket, player_id in connections:
-            try:
-                await websocket.send_json(game_store.public_state(code, player_id))
-            except Exception:
-                sockets.get(code.upper(), set()).discard((websocket, player_id))
+        normalized = code.upper()
+        await connections.broadcast(normalized, lambda player_id: game_store.public_state(normalized, player_id))
 
     @app.exception_handler(GameError)
     async def game_error_handler(_request: Request, exc: GameError) -> JSONResponse:
-        return JSONResponse(status_code=400, content={"error": str(exc)})
+        return JSONResponse(status_code=exc.status_code, content={"error": str(exc)})
 
     @app.exception_handler(RequestValidationError)
     async def validation_error_handler(_request: Request, exc: RequestValidationError) -> JSONResponse:
@@ -72,7 +55,7 @@ def create_app(store: GameStore | None = None) -> FastAPI:
 
     @app.get("/api/health")
     def health() -> dict[str, Any]:
-        return {"status": "ok", "games": list(GAME_CONFIG), "rooms": len(game_store.rooms)}
+        return {"status": "ok", "version": __version__, "games": list(GAME_CONFIG), "rooms": game_store.room_count}
 
     @app.get("/api/games")
     def games() -> list[dict[str, Any]]:
@@ -83,7 +66,7 @@ def create_app(store: GameStore | None = None) -> FastAPI:
 
     @app.post("/api/rooms", status_code=201)
     def create_room(payload: CreateRoomRequest) -> dict[str, str]:
-        room, player = game_store.create_room(payload.name, payload.gameId)
+        room, player = game_store.create_room(payload.name, payload.game_id)
         return {"code": room.code, "playerId": player.id}
 
     @app.post("/api/rooms/{code}/join", status_code=201)
@@ -97,42 +80,45 @@ def create_app(store: GameStore | None = None) -> FastAPI:
 
     @app.websocket("/api/rooms/{code}/ws")
     async def room_socket(websocket: WebSocket, code: str, playerId: str) -> None:
-        await websocket.accept()
         normalized = code.upper()
-        connection = (websocket, playerId)
-        sockets.setdefault(normalized, set()).add(connection)
         try:
-            await websocket.send_json(game_store.public_state(normalized, playerId))
+            initial_state = game_store.public_state(normalized, playerId)
+        except GameError as exc:
+            await websocket.close(code=1008, reason=str(exc))
+            return
+        await connections.connect(websocket, normalized, playerId)
+        try:
+            await websocket.send_json(initial_state)
             while True:
                 await websocket.receive_text()
-        except (WebSocketDisconnect, RuntimeError):
+        except WebSocketDisconnect:
             pass
         finally:
-            sockets.get(normalized, set()).discard(connection)
+            connections.disconnect(websocket, normalized, playerId)
 
     @app.post("/api/rooms/{code}/start")
     async def start_room(code: str, payload: PlayerRequest) -> dict[str, Any]:
-        game_store.start(code, payload.playerId)
+        game_store.start(code, payload.player_id)
         await broadcast(code)
-        return game_store.public_state(code, payload.playerId)
+        return game_store.public_state(code, payload.player_id)
 
     @app.post("/api/rooms/{code}/actions")
     async def submit_action(code: str, payload: ActionRequest) -> dict[str, Any]:
-        game_store.submit_action(code, payload.playerId, payload.values, payload.idempotencyKey)
+        game_store.submit_action(code, payload.player_id, payload.values, payload.idempotency_key)
         await broadcast(code)
-        return game_store.public_state(code, payload.playerId)
+        return game_store.public_state(code, payload.player_id)
 
     @app.post("/api/rooms/{code}/resolve")
     async def resolve_room(code: str, payload: PlayerRequest) -> dict[str, Any]:
-        game_store.force_resolve(code, payload.playerId)
+        game_store.force_resolve(code, payload.player_id)
         await broadcast(code)
-        return game_store.public_state(code, payload.playerId)
+        return game_store.public_state(code, payload.player_id)
 
     @app.post("/api/rooms/{code}/next")
     async def next_round(code: str, payload: PlayerRequest) -> dict[str, Any]:
-        game_store.next_round(code, payload.playerId)
+        game_store.next_round(code, payload.player_id)
         await broadcast(code)
-        return game_store.public_state(code, payload.playerId)
+        return game_store.public_state(code, payload.player_id)
 
     # API routes must be registered before the root static mount.
     app.mount("/", StaticFiles(directory=FRONTEND, html=True), name="frontend")
@@ -142,10 +128,22 @@ def create_app(store: GameStore | None = None) -> FastAPI:
 app = create_app()
 
 
+def valid_port(value: str) -> int:
+    """Parse and range-check a TCP port for CLI and environment defaults."""
+    try:
+        port = int(value)
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError("port must be a whole number") from exc
+    if not 1 <= port <= 65535:
+        raise argparse.ArgumentTypeError("port must be between 1 and 65535")
+    return port
+
+
 def main() -> None:
+    """Run the application with CLI flags overriding environment defaults."""
     parser = argparse.ArgumentParser(description="Run the Psychological Games FastAPI server")
-    parser.add_argument("--host", default="127.0.0.1")
-    parser.add_argument("--port", default=8000, type=int)
+    parser.add_argument("--host", default=os.getenv("HOST", "127.0.0.1"))
+    parser.add_argument("--port", default=os.getenv("PORT", "8000"), type=valid_port)
     args = parser.parse_args()
     print(f"Psychological Games: http://{args.host}:{args.port}")
     print(f"Interactive API docs: http://{args.host}:{args.port}/docs")
