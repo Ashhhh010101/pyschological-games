@@ -12,6 +12,7 @@ class PersistentApiIntegrationTests(unittest.TestCase):
             app_env="test",
             database_url="sqlite+aiosqlite:///:memory:",
             rate_limit_enabled=False,
+            payload_max_bytes=1024,
         )
         self.client = TestClient(create_app(runtime_settings=settings))
         self.client.__enter__()
@@ -20,7 +21,9 @@ class PersistentApiIntegrationTests(unittest.TestCase):
         self.client.__exit__(None, None, None)
 
     def test_secure_sessions_readiness_and_viewer_specific_websocket_fanout(self) -> None:
-        self.assertEqual(self.client.get("/api/ready").status_code, 200)
+        ready = self.client.get("/api/ready", headers={"X-Request-ID": "integration-check"})
+        self.assertEqual(ready.status_code, 200)
+        self.assertEqual(ready.headers["x-request-id"], "integration-check")
         host = self.client.post("/api/rooms", json={"name": "Host", "gameId": "vault"}).json()
         guest = self.client.post(f"/api/rooms/{host['code']}/join", json={"name": "Guest"}).json()
 
@@ -44,6 +47,15 @@ class PersistentApiIntegrationTests(unittest.TestCase):
         invalid = self.client.get(f"/api/rooms/{host['code']}?playerId=invalid")
         self.assertEqual(invalid.status_code, 401)
         self.assertEqual(invalid.json()["error"]["code"], "UNAUTHORIZED_PLAYER")
+
+    def test_oversized_payload_is_rejected_before_json_parsing(self) -> None:
+        response = self.client.post(
+            "/api/rooms",
+            content="x" * 1025,
+            headers={"Content-Type": "application/json"},
+        )
+        self.assertEqual(response.status_code, 413)
+        self.assertEqual(response.json()["error"]["code"], "PAYLOAD_TOO_LARGE")
 
 
 if __name__ == "__main__":

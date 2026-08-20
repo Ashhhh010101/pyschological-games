@@ -6,11 +6,15 @@ import argparse
 import asyncio
 import contextlib
 import hashlib
+import logging
 import os
+import re
+import time
 from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any
+from uuid import uuid4
 
 import uvicorn
 from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect
@@ -19,6 +23,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.trustedhost import TrustedHostMiddleware
 from fastapi.responses import JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
+from sqlalchemy.ext.asyncio import AsyncEngine
 
 from backend import __version__
 from backend.api_models import ActionRequest, CreateRoomRequest, JoinRoomRequest, PlayerRequest
@@ -43,6 +48,9 @@ from backend.domain.repositories import Cache, EventBus, RateLimiter
 from backend.game import GameError, GameStore
 from backend.infrastructure.database.repositories.sqlalchemy_room_repository import SQLAlchemyRoomRepository
 from backend.infrastructure.database.session import create_database
+from backend.infrastructure.http import PayloadSizeLimitMiddleware
+from backend.infrastructure.observability.logging import bind_context, configure_logging
+from backend.infrastructure.observability.telemetry import configure_telemetry
 from backend.infrastructure.redis.cache import MemoryCache, RedisCache
 from backend.infrastructure.redis.pubsub import LocalEventBus, RedisEventBus
 from backend.infrastructure.redis.rate_limit import MemoryRateLimiter, RedisRateLimiter
@@ -50,6 +58,8 @@ from backend.settings import Settings, get_settings
 
 ROOT = Path(__file__).resolve().parents[1]
 FRONTEND = ROOT / "frontend"
+LOGGER = logging.getLogger("psychological_games.api")
+REQUEST_ID = re.compile(r"^[A-Za-z0-9._-]{1,64}$")
 
 ERROR_STATUSES: dict[type[ApplicationError], int] = {
     RoomNotFound: 404,
@@ -74,8 +84,11 @@ def _token_identity(token: str) -> str:
 def create_app(store: GameStore | None = None, runtime_settings: Settings | None = None) -> FastAPI:
     """Build an isolated app; production defaults to SQL plus optional Redis."""
     settings = runtime_settings or get_settings()
+    if store is None:
+        configure_logging(settings.log_level, settings.log_json)
     connections = ConnectionManager()
     repository: SQLAlchemyRoomRepository | None = None
+    database_engine: AsyncEngine | None = None
 
     if settings.redis_url:
         cache: Cache = RedisCache(settings.redis_url, settings.redis_key_prefix)
@@ -93,9 +106,9 @@ def create_app(store: GameStore | None = None, runtime_settings: Settings | None
     if store is not None:
         service: RoomApplication = LegacyRoomService(store)
     else:
-        engine, sessions = create_database(settings)
+        database_engine, sessions = create_database(settings)
         repository = SQLAlchemyRoomRepository(
-            engine,
+            database_engine,
             sessions,
             settings.room_idle_ttl_seconds,
             auto_create=settings.app_env != "production",
@@ -138,6 +151,7 @@ def create_app(store: GameStore | None = None, runtime_settings: Settings | None
             await cache.close()
             if repository is not None:
                 await repository.close()
+            observability.shutdown()
 
     app = FastAPI(
         title="Psychological Games API",
@@ -145,6 +159,7 @@ def create_app(store: GameStore | None = None, runtime_settings: Settings | None
         description="Server-authoritative multiplayer API for five loss-aversion games.",
         lifespan=lifespan,
     )
+    observability = configure_telemetry(app, settings, database_engine)
     app.state.room_service = service
     app.state.repository = repository
     app.state.cache = cache
@@ -163,15 +178,49 @@ def create_app(store: GameStore | None = None, runtime_settings: Settings | None
             allow_methods=["GET", "POST"],
             allow_headers=["Content-Type", "X-Request-ID"],
         )
+    app.add_middleware(PayloadSizeLimitMiddleware, max_bytes=settings.payload_max_bytes)
 
     @app.middleware("http")
     async def security_headers(
         request: Request,
         call_next: Callable[[Request], Awaitable[Response]],
     ) -> Response:
-        if int(request.headers.get("content-length", "0") or 0) > settings.payload_max_bytes:
-            return JSONResponse(status_code=413, content=_error("PAYLOAD_TOO_LARGE", "Request body is too large."))
-        response = await call_next(request)
+        candidate = request.headers.get("x-request-id", "")
+        request_id = candidate if REQUEST_ID.fullmatch(candidate) else str(uuid4())
+        parts = request.url.path.split("/")
+        room_code = parts[3].upper() if len(parts) > 3 and parts[1:3] == ["api", "rooms"] else ""
+        binding = bind_context(request_id, room_code, f"{request.method} {request.url.path}")
+        started = time.perf_counter()
+        try:
+            response = await call_next(request)
+        except Exception:
+            duration_ms = (time.perf_counter() - started) * 1000
+            observability.record_request(request.method, request.url.path, 500, duration_ms)
+            LOGGER.exception(
+                "Unhandled request failure",
+                extra={
+                    "event": "http.request.failed",
+                    "http_method": request.method,
+                    "http_path": request.url.path,
+                    "http_status": 500,
+                    "duration_ms": round(duration_ms, 3),
+                },
+            )
+            binding.reset()
+            raise
+        duration_ms = (time.perf_counter() - started) * 1000
+        observability.record_request(request.method, request.url.path, response.status_code, duration_ms)
+        LOGGER.info(
+            "Request completed",
+            extra={
+                "event": "http.request.completed",
+                "http_method": request.method,
+                "http_path": request.url.path,
+                "http_status": response.status_code,
+                "duration_ms": round(duration_ms, 3),
+            },
+        )
+        response.headers["X-Request-ID"] = request_id
         response.headers["Content-Security-Policy"] = (
             "default-src 'self'; connect-src 'self' ws: wss:; img-src 'self' data:; "
             "script-src 'self' https://cdn.jsdelivr.net; "
@@ -184,6 +233,7 @@ def create_app(store: GameStore | None = None, runtime_settings: Settings | None
         response.headers["X-Frame-Options"] = "DENY"
         if request.url.path.startswith("/api/"):
             response.headers["Cache-Control"] = "no-store"
+        binding.reset()
         return response
 
     def client_identity(request: Request) -> str:
@@ -208,6 +258,13 @@ def create_app(store: GameStore | None = None, runtime_settings: Settings | None
         location = ".".join(str(part) for part in first.get("loc", [])[1:]) or "request"
         message = str(first.get("msg", "Invalid request"))
         return JSONResponse(status_code=422, content=_error("VALIDATION_ERROR", f"{location}: {message}"))
+
+    @app.exception_handler(Exception)
+    async def unexpected_error_handler(_request: Request, _exc: Exception) -> JSONResponse:
+        return JSONResponse(
+            status_code=500,
+            content=_error("INTERNAL_SERVER_ERROR", "An unexpected server error occurred."),
+        )
 
     @app.get("/api/health")
     async def health() -> dict[str, Any]:
