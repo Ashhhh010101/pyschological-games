@@ -1,11 +1,17 @@
 {
-  "name": "psychological-games-local-mvp",
-  "version": "1.0.0",
+  "name": "psychological-games",
+  "version": "2.0.0",
+  "description": "A server-authoritative multiplayer arcade about decision-making under pressure.",
   "private": true,
+  "license": "MIT",
+  "engines": {
+    "node": ">=18"
+  },
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "check": "tsc -p tsconfig.json --noEmit",
-    "start": "python -m backend.server"
+    "start": "python -m backend.server",
+    "test": "npm run check"
   },
   "devDependencies": {
     "typescript": "^5.9.2"
