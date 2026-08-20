@@ -31,6 +31,8 @@ pnpm-debug.log*
 # Runtime files
 *.log
 *.pid
+data/*.db
+data/*.db-*
 
 # Build and packaging
 build/

@@ -63,7 +63,12 @@ export async function requestJson<T>(path: string, options: RequestInit = {}): P
     }
     const body: unknown = await response.json();
     if (!response.ok) {
-      const detail = isRecord(body) && typeof body.error === "string" ? body.error : "Request failed.";
+      const error = isRecord(body) ? body.error : null;
+      const detail = typeof error === "string"
+        ? error
+        : isRecord(error) && typeof error.message === "string"
+          ? error.message
+          : "Request failed.";
       throw new Error(detail);
     }
     return body as T;

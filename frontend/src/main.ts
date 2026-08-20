@@ -341,7 +341,7 @@ async function copyInvite(code: string): Promise<void> {
 
 async function postState(action: "start" | "resolve" | "next"): Promise<void> {
   if (!session) return;
-  await withBusy(async () => { state = await api<GameState>(`/api/rooms/${session!.code}/${action}`, { method: "POST", body: JSON.stringify({ playerId: session!.playerId }) }); });
+  await withBusy(async () => { state = await api<GameState>(`/api/rooms/${session!.code}/${action}`, { method: "POST", body: JSON.stringify({ playerId: session!.playerId, idempotencyKey: crypto.randomUUID() }) }); });
 }
 
 async function boot(): Promise<void> {

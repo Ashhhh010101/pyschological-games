@@ -24,6 +24,7 @@ class JoinRoomRequest(APIModel):
 
 class PlayerRequest(APIModel):
     player_id: str = Field(alias="playerId", min_length=1, max_length=128)
+    idempotency_key: str | None = Field(default=None, alias="idempotencyKey", min_length=1, max_length=128)
 
 
 class ActionRequest(PlayerRequest):
