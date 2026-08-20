@@ -1,0 +1,6 @@
+-r requirements.txt
+
+coverage[toml]>=7.6,<8
+httpx2>=2,<3
+mypy>=1.13,<2
+ruff>=0.8,<1
