@@ -17,6 +17,9 @@ class FastApiTests(unittest.TestCase):
         self.assertEqual(set(health.json()["games"]), set(GAME_CONFIG))
         self.assertIn("Psychological Games", self.client.get("/").text)
         self.assertEqual(self.client.get("/docs").status_code, 200)
+        self.assertEqual(health.headers["cache-control"], "no-store")
+        self.assertEqual(health.headers["x-content-type-options"], "nosniff")
+        self.assertIn("frame-ancestors 'none'", health.headers["content-security-policy"])
 
     def test_every_game_can_create_join_start_and_resolve(self):
         for game_id in GAME_CONFIG:
