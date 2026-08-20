@@ -11,13 +11,30 @@ from backend.application.session_service import SessionService
 from backend.config import GameId
 from backend.domain.events import EventType
 from backend.domain.exceptions import ConcurrentMutation, InvalidGameAction, UnauthorizedPlayer
-from backend.domain.repositories import EventPublisher, RoomRepository, RoomTransaction
+from backend.domain.repositories import Cache, EventPublisher, RoomRepository, RoomTransaction
 from backend.game import GameError, GameStore
 from backend.models import Room
 
 
 class NullEventPublisher:
     async def publish(self, room_code: str, version: int) -> None:
+        return None
+
+
+class NullCache:
+    async def get(self, key: str) -> str | None:
+        return None
+
+    async def set(self, key: str, value: str, ttl_seconds: int) -> None:
+        return None
+
+    async def delete(self, key: str) -> None:
+        return None
+
+    async def ready(self) -> bool:
+        return True
+
+    async def close(self) -> None:
         return None
 
 
@@ -29,10 +46,14 @@ class RoomService:
         repository: RoomRepository,
         sessions: SessionService,
         publisher: EventPublisher | None = None,
+        cache: Cache | None = None,
+        room_ttl_seconds: int = 3600,
     ) -> None:
         self.repository = repository
         self.sessions = sessions
         self.publisher = publisher or NullEventPublisher()
+        self.cache = cache or NullCache()
+        self.room_ttl_seconds = room_ttl_seconds
 
     @staticmethod
     def _engine(room: Room | None = None) -> GameStore:
@@ -53,6 +74,7 @@ class RoomService:
                 await self.repository.create(room, credential.token_hash, credential.expires_at)
             except ConcurrentMutation:
                 continue
+            await self._touch(room.code, room.version)
             await self.publisher.publish(room.code, room.version)
             return {"code": room.code, "playerId": credential.token}
         raise ConcurrentMutation("Could not allocate a unique room after several attempts.")
@@ -69,6 +91,7 @@ class RoomService:
             await transaction.add_event(EventType.PLAYER_JOINED, {"playerId": player.id})
             version = transaction.room.version
         await self.publisher.publish(code.upper(), version)
+        await self._touch(code, version)
         return {"code": code.upper(), "playerId": credential.token}
 
     async def public_state(self, code: str, token: str) -> dict[str, Any]:
@@ -131,10 +154,15 @@ class RoomService:
                 )
             version = transaction.room.version
         await self.publisher.publish(code.upper(), version)
+        await self._touch(code, version)
         return response
 
     async def expire_idle_rooms(self) -> list[str]:
-        return await self.repository.expire_idle(datetime.now(timezone.utc))
+        expired = await self.repository.expire_idle(datetime.now(timezone.utc))
+        for code in expired:
+            await self.cache.delete(f"room:{code}")
+            await self.publisher.publish(code, -1)
+        return expired
 
     async def active_room_count(self) -> int:
         return await self.repository.active_count()
@@ -170,7 +198,11 @@ class RoomService:
                 await transaction.record_idempotency(player_id, operation, key, response)
             version = transaction.room.version
         await self.publisher.publish(code.upper(), version)
+        await self._touch(code, version)
         return response
+
+    async def _touch(self, code: str, version: int) -> None:
+        await self.cache.set(f"room:{code.upper()}", str(version), self.room_ttl_seconds)
 
     @staticmethod
     def _require_player(transaction: RoomTransaction) -> str:

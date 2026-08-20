@@ -1,10 +1,11 @@
+import asyncio
 import unittest
 
 from sqlalchemy import func, select
 
 from backend.application.room_service import RoomService
 from backend.application.session_service import SessionService
-from backend.domain.exceptions import InvalidGameAction, UnauthorizedPlayer
+from backend.domain.exceptions import ApplicationError, InvalidGameAction, UnauthorizedPlayer
 from backend.infrastructure.database.models import (
     GameEventRecord,
     GameStateSnapshotRecord,
@@ -81,6 +82,25 @@ class PersistenceTests(unittest.IsolatedAsyncioTestCase):
         async with self.sessions() as session:
             player_count = await session.scalar(select(func.count()).select_from(PlayerRecord))
         self.assertEqual(player_count, 2)
+
+    async def test_concurrent_resolution_commits_exactly_one_result(self) -> None:
+        created = await self.service.create_room("Host", "vault")
+        await self.service.join_room(created["code"], "Guest")
+        await self.service.start(created["code"], created["playerId"], "start-concurrent")
+
+        outcomes = await asyncio.gather(
+            self.service.force_resolve(created["code"], created["playerId"], "resolve-a"),
+            self.service.force_resolve(created["code"], created["playerId"], "resolve-b"),
+            return_exceptions=True,
+        )
+
+        successes = [outcome for outcome in outcomes if isinstance(outcome, dict)]
+        failures = [outcome for outcome in outcomes if isinstance(outcome, ApplicationError)]
+        self.assertEqual(len(successes), 1)
+        self.assertEqual(len(failures), 1)
+        async with self.sessions() as session:
+            result_count = await session.scalar(select(func.count()).select_from(ResultRecord))
+        self.assertEqual(result_count, 1)
 
 
 if __name__ == "__main__":

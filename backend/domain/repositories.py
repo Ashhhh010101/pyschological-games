@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Awaitable, Callable
 from contextlib import AbstractAsyncContextManager
 from dataclasses import dataclass
 from datetime import datetime
@@ -51,5 +52,15 @@ class EventPublisher(Protocol):
     async def publish(self, room_code: str, version: int) -> None: ...
 
 
+EventHandler = Callable[[str, int], Awaitable[None]]
+
+
+class EventBus(EventPublisher, Protocol):
+    async def start(self, handler: EventHandler) -> None: ...
+    async def ready(self) -> bool: ...
+    async def close(self) -> None: ...
+
+
 class RateLimiter(Protocol):
     async def check(self, scope: str, identity: str, limit: str) -> None: ...
+    async def close(self) -> None: ...

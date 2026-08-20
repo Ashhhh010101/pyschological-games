@@ -1,9 +1,12 @@
 """WebSocket connection tracking isolated from HTTP route definitions."""
 
-from collections.abc import Callable
+import inspect
+from collections.abc import Awaitable, Callable
 from typing import Any
 
 from fastapi import WebSocket
+
+from backend.domain.exceptions import ApplicationError
 
 
 class ConnectionManager:
@@ -24,10 +27,26 @@ class ConnectionManager:
         if not connections:
             self._rooms.pop(code, None)
 
-    async def broadcast(self, code: str, state_for: Callable[[str], dict[str, Any]]) -> None:
+    async def broadcast(
+        self,
+        code: str,
+        state_for: Callable[[str], dict[str, Any] | Awaitable[dict[str, Any]]],
+    ) -> None:
         """Send each player their own privacy-filtered room projection."""
         for websocket, player_id in self._rooms.get(code, set()).copy():
             try:
-                await websocket.send_json(state_for(player_id))
-            except RuntimeError:
+                state = state_for(player_id)
+                await websocket.send_json(await state if inspect.isawaitable(state) else state)
+            except (ApplicationError, RuntimeError, OSError):
                 self.disconnect(websocket, code, player_id)
+
+    async def close_room(self, code: str, reason: str = "Room expired") -> None:
+        for websocket, player_id in self._rooms.get(code, set()).copy():
+            try:
+                await websocket.close(code=4001, reason=reason)
+            finally:
+                self.disconnect(websocket, code, player_id)
+
+    async def close_all(self) -> None:
+        for code in list(self._rooms):
+            await self.close_room(code, "Server shutting down")

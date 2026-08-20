@@ -10,6 +10,10 @@ from backend.server import create_app
 class FastApiTests(unittest.TestCase):
     def setUp(self):
         self.client = TestClient(create_app(GameStore(Random(11))))
+        self.client.__enter__()
+
+    def tearDown(self):
+        self.client.__exit__(None, None, None)
 
     def test_health_docs_and_frontend_are_served(self):
         health = self.client.get("/api/health")
@@ -40,7 +44,7 @@ class FastApiTests(unittest.TestCase):
     def test_validation_errors_are_clear_json(self):
         response = self.client.post("/api/rooms", json={"name": "Host", "gameId": "not-a-game"})
         self.assertEqual(response.status_code, 422)
-        self.assertIn("gameId", response.json()["error"])
+        self.assertIn("gameId", response.json()["error"]["message"])
 
     def test_domain_errors_use_specific_http_statuses(self):
         missing = self.client.get("/api/rooms/NOPE?playerId=unknown")
