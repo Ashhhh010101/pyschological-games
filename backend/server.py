@@ -44,7 +44,7 @@ from backend.domain.exceptions import (
     RoomNotFound,
     UnauthorizedPlayer,
 )
-from backend.domain.repositories import Cache, EventBus, RateLimiter
+from backend.domain.repositories import Cache, EventBus, LockManager, RateLimiter
 from backend.game import GameError, GameStore
 from backend.infrastructure.database.repositories.sqlalchemy_room_repository import SQLAlchemyRoomRepository
 from backend.infrastructure.database.session import create_database
@@ -52,6 +52,7 @@ from backend.infrastructure.http import PayloadSizeLimitMiddleware
 from backend.infrastructure.observability.logging import bind_context, configure_logging
 from backend.infrastructure.observability.telemetry import configure_telemetry
 from backend.infrastructure.redis.cache import MemoryCache, RedisCache
+from backend.infrastructure.redis.lock import MemoryLockManager, RedisLockManager
 from backend.infrastructure.redis.pubsub import LocalEventBus, RedisEventBus
 from backend.infrastructure.redis.rate_limit import MemoryRateLimiter, RedisRateLimiter
 from backend.settings import Settings, get_settings
@@ -98,10 +99,17 @@ def create_app(store: GameStore | None = None, runtime_settings: Settings | None
             settings.redis_key_prefix,
             settings.rate_limit_enabled,
         )
+        lock_manager: LockManager = RedisLockManager(
+            settings.redis_url,
+            settings.redis_key_prefix,
+            settings.lock_timeout_seconds,
+            settings.lock_wait_seconds,
+        )
     else:
         cache = MemoryCache()
         event_bus = LocalEventBus()
         limiter = MemoryRateLimiter(settings.rate_limit_enabled)
+        lock_manager = MemoryLockManager()
 
     if store is not None:
         service: RoomApplication = LegacyRoomService(store)
@@ -119,6 +127,7 @@ def create_app(store: GameStore | None = None, runtime_settings: Settings | None
             event_bus,
             cache,
             settings.room_idle_ttl_seconds,
+            lock_manager,
         )
 
     async def fan_out(code: str, version: int) -> None:
@@ -148,6 +157,7 @@ def create_app(store: GameStore | None = None, runtime_settings: Settings | None
             await connections.close_all()
             await event_bus.close()
             await limiter.close()
+            await lock_manager.close()
             await cache.close()
             if repository is not None:
                 await repository.close()
@@ -165,6 +175,7 @@ def create_app(store: GameStore | None = None, runtime_settings: Settings | None
     app.state.cache = cache
     app.state.event_bus = event_bus
     app.state.rate_limiter = limiter
+    app.state.lock_manager = lock_manager
     app.state.connections = connections
     if store is not None:
         app.state.game_store = store

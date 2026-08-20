@@ -27,6 +27,8 @@ class Settings(BaseSettings):
     redis_key_prefix: str = "psychological-games"
     room_idle_ttl_seconds: int = Field(default=3600, ge=60)
     expiry_scan_interval_seconds: int = Field(default=60, ge=5, le=3600)
+    lock_timeout_seconds: int = Field(default=15, ge=5, le=120)
+    lock_wait_seconds: int = Field(default=5, ge=1, le=60)
     session_ttl_seconds: int = Field(default=86400, ge=300)
     payload_max_bytes: int = Field(default=65536, ge=1024, le=10_485_760)
     rate_limit_enabled: bool = True

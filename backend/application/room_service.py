@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import AsyncIterator, Callable
+from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from random import SystemRandom
 from typing import Any
@@ -11,7 +12,7 @@ from backend.application.session_service import SessionService
 from backend.config import GameId
 from backend.domain.events import EventType
 from backend.domain.exceptions import ConcurrentMutation, InvalidGameAction, UnauthorizedPlayer
-from backend.domain.repositories import Cache, EventPublisher, RoomRepository, RoomTransaction
+from backend.domain.repositories import Cache, EventPublisher, LockManager, RoomRepository, RoomTransaction
 from backend.game import GameError, GameStore
 from backend.models import Room
 
@@ -38,6 +39,15 @@ class NullCache:
         return None
 
 
+class NullLockManager:
+    @asynccontextmanager
+    async def hold(self, key: str) -> AsyncIterator[None]:
+        yield
+
+    async def close(self) -> None:
+        return None
+
+
 class RoomService:
     """Authenticate commands and commit engine mutations as atomic SQL transactions."""
 
@@ -48,12 +58,14 @@ class RoomService:
         publisher: EventPublisher | None = None,
         cache: Cache | None = None,
         room_ttl_seconds: int = 3600,
+        locks: LockManager | None = None,
     ) -> None:
         self.repository = repository
         self.sessions = sessions
         self.publisher = publisher or NullEventPublisher()
         self.cache = cache or NullCache()
         self.room_ttl_seconds = room_ttl_seconds
+        self.locks = locks or NullLockManager()
 
     @staticmethod
     def _engine(room: Room | None = None) -> GameStore:
@@ -81,7 +93,7 @@ class RoomService:
 
     async def join_room(self, code: str, name: str) -> dict[str, str]:
         credential = self.sessions.issue()
-        async with self.repository.transaction(code) as transaction:
+        async with self.locks.hold(code.upper()), self.repository.transaction(code) as transaction:
             engine = self._engine(transaction.room)
             try:
                 _, player = engine.join_room(code, name)
@@ -129,7 +141,7 @@ class RoomService:
         key: str,
     ) -> dict[str, Any]:
         token_hash = self.sessions.hash_token(token)
-        async with self.repository.transaction(code, token_hash) as transaction:
+        async with self.locks.hold(code.upper()), self.repository.transaction(code, token_hash) as transaction:
             player_id = self._require_player(transaction)
             repeated = await transaction.find_idempotency("action", key)
             if repeated:
@@ -177,7 +189,7 @@ class RoomService:
         mutation: Callable[[GameStore, str, str], Room],
     ) -> dict[str, Any]:
         token_hash = self.sessions.hash_token(token)
-        async with self.repository.transaction(code, token_hash) as transaction:
+        async with self.locks.hold(code.upper()), self.repository.transaction(code, token_hash) as transaction:
             player_id = self._require_player(transaction)
             if key:
                 repeated = await transaction.find_idempotency(operation, key)

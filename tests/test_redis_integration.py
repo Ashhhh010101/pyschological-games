@@ -5,6 +5,7 @@ from uuid import uuid4
 
 from backend.domain.exceptions import RateLimitExceeded
 from backend.infrastructure.redis.cache import RedisCache
+from backend.infrastructure.redis.lock import RedisLockManager
 from backend.infrastructure.redis.pubsub import RedisEventBus
 from backend.infrastructure.redis.rate_limit import RedisRateLimiter
 
@@ -20,6 +21,8 @@ class RedisIntegrationTests(unittest.IsolatedAsyncioTestCase):
         limiter = RedisRateLimiter(url, prefix)
         first = RedisEventBus(url, prefix)
         second = RedisEventBus(url, prefix)
+        first_locks = RedisLockManager(url, prefix, timeout_seconds=5, wait_seconds=2)
+        second_locks = RedisLockManager(url, prefix, timeout_seconds=5, wait_seconds=2)
         first_received = asyncio.Event()
         second_received = asyncio.Event()
 
@@ -43,10 +46,25 @@ class RedisIntegrationTests(unittest.IsolatedAsyncioTestCase):
             await first.publish("ABCDE", 12)
             await asyncio.wait_for(first_received.wait(), timeout=2)
             await asyncio.wait_for(second_received.wait(), timeout=2)
+
+            second_lock_acquired = asyncio.Event()
+
+            async def acquire_second_lock() -> None:
+                async with second_locks.hold("ABCDE"):
+                    second_lock_acquired.set()
+
+            async with first_locks.hold("ABCDE"):
+                second_lock_task = asyncio.create_task(acquire_second_lock())
+                await asyncio.sleep(0.05)
+                self.assertFalse(second_lock_acquired.is_set())
+            await asyncio.wait_for(second_lock_task, timeout=2)
+            self.assertTrue(second_lock_acquired.is_set())
         finally:
             await first.close()
             await second.close()
             await limiter.close()
+            await first_locks.close()
+            await second_locks.close()
             await cache.close()
 
 

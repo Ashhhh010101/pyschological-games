@@ -26,21 +26,21 @@ Repository interfaces (backend/domain/repositories.py)
        ┌──────┴────────┐
 SQLAlchemy/PostgreSQL  Redis
 rooms, players,        TTL markers, distributed
-rounds, actions,       rate limits, pub/sub
-snapshots, results
+rounds, actions,       room locks, rate limits,
+snapshots, results     and pub/sub
 ```
 
 ## Request flow
 
 1. FastAPI validates a bounded request and applies an identity-specific rate limit.
 2. The application hashes the opaque session token and opens a repository transaction.
-3. PostgreSQL locks the room row. The saved snapshot is hydrated into the existing engine.
+3. Redis serializes the room command across instances, then PostgreSQL locks the room row. The saved snapshot is hydrated into the existing engine.
 4. The engine validates and mutates state; repositories append action, event, result, and idempotency records.
 5. The room snapshot and optimistic revision commit atomically.
 6. Redis publishes only the room code and committed version—never hidden decisions.
 7. Every app instance reloads a separate viewer-filtered projection for each local socket.
 
-PostgreSQL row locking is the primary concurrency mechanism. SQLAlchemy revision checks provide an additional optimistic guard and SQLite test safety. Unique constraints protect action idempotency, event order, round results, and snapshot versions.
+The Redis lease reduces cross-instance contention; PostgreSQL row locking remains the correctness mechanism if a lease expires. SQLAlchemy revision checks add an optimistic guard and SQLite test safety. Unique constraints protect action idempotency, event order, round results, and snapshot versions.
 
 ## Failure boundaries
 

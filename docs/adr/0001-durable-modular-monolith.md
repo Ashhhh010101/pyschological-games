@@ -9,7 +9,7 @@ The original single-process game stored rooms and raw player identifiers in memo
 
 ## Decision
 
-Keep the tested rules in `backend/game.py` and place an application-service boundary around them. PostgreSQL stores the authoritative room snapshot plus normalized sessions, rounds, actions, results, idempotency records, and events. Mutations acquire a room row lock and commit as one SQL transaction. Redis provides disposable TTL markers, distributed rate limits, and room-version pub/sub. WebSocket messages are regenerated per authenticated viewer from committed SQL state.
+Keep the tested rules in `backend/game.py` and place an application-service boundary around them. PostgreSQL stores the authoritative room snapshot plus normalized sessions, rounds, actions, results, idempotency records, and events. Mutations acquire a distributed Redis lease and a PostgreSQL room row lock before committing as one SQL transaction. Redis also provides disposable TTL markers, distributed rate limits, and room-version pub/sub. WebSocket messages are regenerated per authenticated viewer from committed SQL state.
 
 Local development uses async SQLite and in-process implementations of Redis-facing ports. Production requires migrations and PostgreSQL; Redis is strongly recommended and included in the supported Compose topology.
 

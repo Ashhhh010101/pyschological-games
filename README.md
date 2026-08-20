@@ -22,7 +22,7 @@ The rules remain isolated in `backend/game.py`. The browser submits intentions o
 - Python 3.10+ with FastAPI, Pydantic Settings, and Uvicorn
 - SQLAlchemy 2 async repositories and Alembic migrations
 - PostgreSQL in production; SQLite for zero-service local development and tests
-- Redis for room TTL markers, distributed rate limits, and pub/sub fan-out
+- Redis for room TTL markers, distributed locks/rate limits, and pub/sub fan-out
 - OpenTelemetry traces and metrics plus correlation-aware JSON logs
 - Docker Compose, GitHub Actions, Ruff, mypy, Coverage, and unittest
 
