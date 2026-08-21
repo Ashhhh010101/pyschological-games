@@ -80,4 +80,6 @@ jobs:
     needs: [backend, frontend]
     steps:
       - uses: actions/checkout@v4
+      - run: docker compose config --quiet
+      - run: docker compose -f compose.yaml -f compose.sqlite.yaml config --quiet
       - run: docker build --tag psychological-games:ci .

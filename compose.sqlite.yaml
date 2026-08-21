@@ -1,0 +1,12 @@
+# Use with: docker compose -f compose.yaml -f compose.sqlite.yaml up --build
+services:
+  migrate:
+    environment:
+      DATABASE_URL: sqlite+aiosqlite:////app/data/psychological_games.db
+
+  app:
+    environment:
+      DATABASE_URL: sqlite+aiosqlite:////app/data/psychological_games.db
+
+  postgres:
+    profiles: ["postgres"]

@@ -10,9 +10,21 @@
 
 The `migrate` service applies Alembic before `app` is admitted. PostgreSQL and Redis persist in named volumes. The app filesystem is read-only, runs without root, and has `no-new-privileges`.
 
+## SQLite deployment
+
+For a small single-instance installation, use the SQLite override:
+
+```console
+docker compose -f compose.yaml -f compose.sqlite.yaml up --build -d
+```
+
+This selects the async SQLite driver at runtime, mounts the same `sqlite-data` volume into the migration and app containers, and disables the PostgreSQL service. The database factory enables foreign keys, a busy timeout, WAL mode, and normal synchronous durability. Back up the named volume or its database file before upgrades.
+
+Do not scale SQLite-backed app containers or place the database on a network filesystem. Switch `DATABASE_URL` to `postgresql+asyncpg://...`, migrate the data through a reviewed procedure, and use the base Compose topology for horizontal scaling.
+
 ## Horizontal scaling
 
-All replicas must use the same PostgreSQL database, Redis database/prefix, signing-independent session policy, and schema revision. Scale only the `app` service:
+All replicas must use the same PostgreSQL database, Redis database/prefix, signing-independent session policy, and schema revision. SQLite is not supported for this topology. Scale only the `app` service:
 
 ```console
 docker compose up -d --scale app=3

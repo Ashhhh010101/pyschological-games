@@ -42,6 +42,8 @@ snapshots, results     and pub/sub
 
 The Redis lease reduces cross-instance contention; PostgreSQL row locking remains the correctness mechanism if a lease expires. SQLAlchemy revision checks add an optimistic guard and SQLite test safety. Unique constraints protect action idempotency, event order, round results, and snapshot versions.
 
+The database adapter is selected entirely from `DATABASE_URL`. PostgreSQL uses `asyncpg` and a configured connection pool. SQLite uses `aiosqlite`, enforced foreign keys, WAL mode for file databases, a busy timeout, and the same repositories and migrations. SQLite is a single-replica deployment option; multi-instance deployments require PostgreSQL.
+
 ## Failure boundaries
 
 - Invalid domain commands roll back the complete SQL transaction.
