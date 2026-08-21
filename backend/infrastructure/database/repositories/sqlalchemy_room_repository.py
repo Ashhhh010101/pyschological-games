@@ -139,6 +139,10 @@ class SQLAlchemyRoomRepository:
                         updated_at=now,
                     )
                 )
+                # Establish the parent row before records that reference it. This is
+                # required when SQLite foreign-key enforcement is enabled and keeps
+                # insert ordering explicit across all supported databases.
+                await session.flush()
                 await self.players.add(session, room.code, room.players[room.host_id], token_hash, expires_at)
                 self.games.add_session(session, room)
                 self.games.add_snapshot(session, room, state)

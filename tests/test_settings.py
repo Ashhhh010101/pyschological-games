@@ -9,7 +9,15 @@ class SettingsTests(unittest.TestCase):
     def test_defaults_support_local_async_sqlite(self):
         settings = Settings(_env_file=None)
         self.assertTrue(settings.database_url.startswith("sqlite+aiosqlite://"))
+        self.assertEqual(settings.database_backend, "sqlite")
         self.assertEqual(settings.port, 8000)
+
+    def test_backend_is_selected_from_database_url(self):
+        settings = Settings(
+            _env_file=None,
+            database_url="postgresql+asyncpg://user:password@database/game",
+        )
+        self.assertEqual(settings.database_backend, "postgresql")
 
     def test_origin_and_host_lists_are_normalized(self):
         settings = Settings(

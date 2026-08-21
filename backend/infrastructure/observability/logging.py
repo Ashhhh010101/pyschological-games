@@ -67,6 +67,8 @@ class JsonFormatter(logging.Formatter):
             "http_status",
             "duration_ms",
             "player_ref",
+            "attempt",
+            "database_backend",
         ):
             field = getattr(record, key, None)
             if field not in (None, ""):

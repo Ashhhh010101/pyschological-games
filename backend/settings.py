@@ -23,6 +23,10 @@ class Settings(BaseSettings):
     database_url: str = "sqlite+aiosqlite:///./data/psychological_games.db"
     database_echo: bool = False
     database_pool_size: int = Field(default=10, ge=1, le=100)
+    database_connect_attempts: int = Field(default=30, ge=1, le=300)
+    database_retry_delay_seconds: float = Field(default=1.0, ge=0.1, le=30)
+    sqlite_busy_timeout_ms: int = Field(default=5000, ge=100, le=120_000)
+    sqlite_wal_enabled: bool = True
     redis_url: str | None = None
     redis_key_prefix: str = "psychological-games"
     room_idle_ttl_seconds: int = Field(default=3600, ge=60)
@@ -68,6 +72,10 @@ class Settings(BaseSettings):
     @property
     def hosts(self) -> list[str]:
         return [host.strip() for host in self.trusted_hosts.split(",") if host.strip()]
+
+    @property
+    def database_backend(self) -> Literal["sqlite", "postgresql"]:
+        return "sqlite" if self.database_url.startswith("sqlite+aiosqlite://") else "postgresql"
 
 
 @lru_cache
