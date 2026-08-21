@@ -4,7 +4,7 @@ x-app-environment: &app-environment
   APP_ENV: production
   HOST: 0.0.0.0
   PORT: 8000
-  DATABASE_URL: postgresql+asyncpg://psychological_games:${POSTGRES_PASSWORD:-local-development-only}@postgres:5432/psychological_games
+  DATABASE_URL: ${COMPOSE_DATABASE_URL:-postgresql+asyncpg://psychological_games:${POSTGRES_PASSWORD:-local-development-only}@postgres:5432/psychological_games}
   REDIS_URL: redis://redis:6379/0
   ALLOWED_ORIGINS: ${ALLOWED_ORIGINS:-}
   TRUSTED_HOSTS: ${TRUSTED_HOSTS:-*}
@@ -25,11 +25,10 @@ services:
   migrate:
     build:
       context: .
-    command: ["alembic", "upgrade", "head"]
+    command: ["python", "-m", "backend.migrate"]
     environment: *app-environment
-    depends_on:
-      postgres:
-        condition: service_healthy
+    volumes:
+      - sqlite-data:/app/data
     restart: "no"
     <<: *app-security
 
@@ -39,6 +38,8 @@ services:
     ports:
       - "${PORT:-8000}:8000"
     environment: *app-environment
+    volumes:
+      - sqlite-data:/app/data
     depends_on:
       migrate:
         condition: service_completed_successfully
@@ -92,3 +93,4 @@ services:
 volumes:
   postgres-data:
   redis-data:
+  sqlite-data:

@@ -48,6 +48,14 @@ docker compose --profile observability up --build -d
 
 Set `OTEL_ENABLED=true` in `.env`. The bundled collector writes concise telemetry to its logs; replace its exporter configuration for a production backend. Operational procedures are in [deployment](docs/deployment.md) and the [runbooks](docs/runbooks/operations.md).
 
+For a lightweight single-instance deployment backed by persistent SQLite instead of PostgreSQL:
+
+```console
+docker compose -f compose.yaml -f compose.sqlite.yaml up --build -d
+```
+
+The override selects `sqlite+aiosqlite:////app/data/psychological_games.db`, persists it in the `sqlite-data` volume, and omits PostgreSQL. Alembic uses the same runtime URL. SQLite mode is intended for one app replica; choose PostgreSQL before scaling horizontally.
+
 ## Local development
 
 SQLite and in-process coordination are the defaults, so PostgreSQL and Redis are optional for a single developer process.
@@ -80,6 +88,9 @@ All settings are environment-driven and validated at startup. See [.env.example]
 |---|---|---|
 | `APP_ENV` | `development` | `development`, `test`, or `production` |
 | `DATABASE_URL` | local async SQLite | Async SQLAlchemy URL; Compose supplies PostgreSQL |
+| `COMPOSE_DATABASE_URL` | Compose PostgreSQL URL | Optional database override injected by base Compose |
+| `SQLITE_WAL_ENABLED` | `true` | Use write-ahead logging for file-backed SQLite |
+| `SQLITE_BUSY_TIMEOUT_MS` | `5000` | Wait for a SQLite writer before returning lock errors |
 | `REDIS_URL` | empty | Enables distributed cache, limits, and pub/sub |
 | `ROOM_IDLE_TTL_SECONDS` | `3600` | Idle room expiry |
 | `SESSION_TTL_SECONDS` | `86400` | Anonymous player credential lifetime |
