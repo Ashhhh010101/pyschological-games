@@ -117,6 +117,29 @@ class PersistenceTests(unittest.IsolatedAsyncioTestCase):
         with self.assertRaises(RoomExpired):
             await self.service.public_state(created["code"], created["playerId"])
 
+    async def test_action_idempotency_advancement_and_active_count(self) -> None:
+        created = await self.service.create_room("Host", "vault")
+        joined = await self.service.join_room(created["code"], "Guest")
+        await self.service.start(created["code"], created["playerId"], "start")
+        values = {"deposit": 0, "useKey": False, "useSeal": False}
+        first = await self.service.submit_action(created["code"], created["playerId"], values, "same")
+        repeated = await self.service.submit_action(created["code"], created["playerId"], values, "same")
+        self.assertEqual(first, repeated)
+        resolved = await self.service.submit_action(created["code"], joined["playerId"], values, "guest")
+        self.assertEqual(resolved["phase"], "results")
+        advanced = await self.service.next_round(created["code"], created["playerId"], "next")
+        self.assertEqual(advanced["phase"], "decision")
+        self.assertEqual(await self.service.active_room_count(), 1)
+
+    async def test_invalid_persistent_actions_are_translated(self) -> None:
+        created = await self.service.create_room("Host", "vault")
+        await self.service.join_room(created["code"], "Guest")
+        await self.service.start(created["code"], created["playerId"])
+        with self.assertRaises(InvalidGameAction):
+            await self.service.submit_action(created["code"], created["playerId"], {}, "invalid")
+        with self.assertRaises(InvalidGameAction):
+            await self.service.start(created["code"], created["playerId"])
+
 
 if __name__ == "__main__":
     unittest.main()
